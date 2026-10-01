@@ -1,0 +1,8 @@
+# macOS archive metadata
+__MACOSX/
+.DS_Store
+
+# Python cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
