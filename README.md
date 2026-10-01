@@ -9,7 +9,7 @@ Detailed explanation of how the code works:
 - Q1 (reconstruction, outlier rejection, before/after results, functions): [`Q1_EXPLANATION.md`](Q1_EXPLANATION.md)
 - Q2 (features, model selection, evaluation, functions): [`Q2_EXPLANATION.md`](Q2_EXPLANATION.md)
 
-Q1 report draft and remaining to-do list: [`Q1_REPORT_DRAFT.md`](Q1_REPORT_DRAFT.md)
+Report drafts and remaining to-do lists: [`Q1_REPORT_DRAFT.md`](Q1_REPORT_DRAFT.md), [`Q2_REPORT_DRAFT.md`](Q2_REPORT_DRAFT.md)
 
 ---
 
@@ -27,6 +27,7 @@ Q1 report draft and remaining to-do list: [`Q1_REPORT_DRAFT.md`](Q1_REPORT_DRAFT
 | `assign2_scene_model.pkl` | Q2 trained model (created by `MainQ2.py`, loaded by `assign2_sceneclassifier`) |
 | `Q2_EXPLANATION.md` | How the Q2 code works: features, model selection, evaluation, function reference |
 | `figures_q2/` | Figures produced by `MainQ2.py` (for the report) |
+| `Q2_REPORT_DRAFT.md` | Draft text for the Q2 report (Introduction, Methodology, Results and Discussion, appendix plan, references) and the remaining Q2 to-do list |
 | `assignment2_stereodata/` | Q1 data: 49 stereo pairs + calibration / pose / terrain pickles |
 | `assignment2_places/` | Q2 data: 7 scene classes x 50 images |
 | `AMME5710_week*_tutorial.ipynb` | Tutorial notebooks (week 5 = stereo vision, week 7 = image classification reference) |
@@ -233,7 +234,8 @@ Feature settings (`FEATURE_PARAMS`) are at the top of `assign2_sceneclassifier.p
 The code follows the **Week 7 tutorial** structure: features -> scikit-learn classifier -> metrics.
 
 1. **Split:** stratified 280 train / 70 test. Every choice below uses 3x5-fold CV on the training set only.
-2. **Pre-processing:** resize to 128x128 colour + 128x128 grayscale. Colour space and CLAHE are tested.
+2. **Pre-processing:** resize to 128x128 colour + 128x128 grayscale. Colour space, colour quantisation (histogram
+   bins), brightness equalisation of the colour image and CLAHE on the grayscale image are tested.
 3. **Features (962 values, 5 blocks):** `colour` HSV 8x4x4 histogram (sqrt), `layout` Lab mean/std on a 4x4 grid,
    `hog` (32 px cells, `cv2.HOGDescriptor`), `lbp` rotation-invariant uniform LBP at r = 1, 2, 3, `gist` Gabor
    energy (4 scales x 6 orientations) on a 4x4 grid.
@@ -249,7 +251,9 @@ The code follows the **Week 7 tutorial** structure: features -> scikit-learn cla
 
 Pre-processing / feature parameters (RBF SVM, 3x5-fold CV): layout grid 4x4 0.944 vs 2x2 0.873; HOG cell 32 0.627
 vs 16 0.583; GIST grid 4x4 0.652 vs 2x2 0.636; Lab histogram 0.755 vs RGB 0.831 / HSV 0.824; texture with CLAHE
-0.757 vs without 0.748 (RGB/HSV and CLAHE differences are within noise -> simpler option kept).
+0.757 vs without 0.748 (RGB/HSV and CLAHE differences are within noise -> simpler option kept). Colour quantisation
+(HSV bins): 4x2x2 0.751, 8x4x4 (used) 0.824, 16x4x4 0.827, 8x8x8 0.855. Histogram-equalising the colour image's
+brightness lowers colour+layout from 0.933 to 0.912 (overall brightness is informative), so it is off.
 
 Feature set x classifier (3x5-fold CV accuracy, best parameters):
 
@@ -280,6 +284,10 @@ Discussion points for the report:
 - **Errors:** both test errors are predicted as snow (a sky with bare branches; a road under a white overcast sky);
   the true class is second in both cases, so top-2 = 100%.
 - **Learning curve** still rising at 224 images -> more data would help; the saved model uses all 350.
+- **Which classes each feature type separates** (`q2_fig07.png`, CV predictions on the training set): colour alone
+  fails on the grey/white classes (urban recall 0.65, snow 0.72); layout fixes them (0.95); texture is the reverse
+  of colour (urban 0.90, but desert 0.57, snow 0.53). With colour+layout the main confusions are road<->urban (6),
+  sky<->urban (5) and sky<->snow (4); adding texture removes road<->urban entirely.
 - **State of the art:** CNNs trained on Places365 reach far higher accuracy on hundreds of classes; hand-crafted
   features work here because there are only 7 visually distinct classes. Pre-trained CNNs were not used (the
   assignment forbids other data).
@@ -294,9 +302,10 @@ Figures in `figures_q2/`:
 | `q2_fig04.png` | Feature set x classifier CV accuracy |
 | `q2_fig05.png` | Parameter selection (KNN k, RBF SVM C x gamma, linear SVM C) |
 | `q2_fig06.png` | Learning curve of the selected model |
-| `q2_fig07.png` | Test confusion matrix + per-class precision/recall/F1 |
-| `q2_fig08.png` | Top-k test accuracy |
-| `q2_fig09.png` | Misclassified test images |
+| `q2_fig07.png` | CV confusion matrix (training set) + per-class recall of each feature set |
+| `q2_fig08.png` | Test confusion matrix + per-class precision/recall/F1 |
+| `q2_fig09.png` | Top-k test accuracy |
+| `q2_fig10.png` | Misclassified test images |
 
 ---
 
