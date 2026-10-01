@@ -144,8 +144,9 @@ Each variant re-extracts only the affected blocks and is scored with an RBF SVM 
   clearly worse than RGB/HSV (a and b do not separate hues as well as H); HOG is better with 32 px cells than 16
   px (fewer, more stable features for 280 training images).
 - **Quantisation (HSV bins):** 4x2x2 bins is too coarse (0.751). The colour histogram improves with finer bins:
-  8x4x4 (used) 0.824, 16x4x4 0.827, 8x8x8 0.855. 8x8x8 scores best on its own, by about one standard deviation;
-  the final model keeps 8x4x4 (128 values instead of 512).
+  8x4x4 (used) 0.824, 16x4x4 0.827, 8x8x8 0.855. 8x8x8 scores best on its own, by about one standard deviation,
+  but a separate check with all five blocks + SVM (same 15 folds) gave 0.961 vs 0.963 for 8x4x4: no gain once
+  layout and texture are included. The final model keeps 8x4x4 (128 values instead of 512).
 - **Equalising the colour image hurts** (colour+layout 0.933 -> 0.912): overall brightness is informative here
   (bright snow and sky, dark ball pits and shaded streets), and equalisation removes it.
 - **No real effect:** RGB vs HSV and CLAHE vs no CLAHE differ by less than 1 point, far less than the std, and their

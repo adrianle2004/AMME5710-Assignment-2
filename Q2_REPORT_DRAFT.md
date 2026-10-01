@@ -56,8 +56,11 @@ features and a grayscale copy for the texture features. Four pre-processing choi
   deviation); Lab is clearly worse (0.755). HSV was kept because it separates hue from brightness, so the same
   surface in sun and shade falls in the same hue bins.
 - *Quantisation:* a joint HSV histogram with 4x2x2 bins is too coarse (0.751); 8x4x4 (used) gives 0.824, 16x4x4
-  0.827 and 8x8x8 0.855. Finer saturation and value bins help the colour histogram on its own; 8x4x4 was kept
-  for a smaller feature vector (128 vs 512 values). *[You could mention 8x8x8 as a possible improvement.]*
+  0.827 and 8x8x8 0.855. Finer saturation and value bins help the colour histogram on its own, but not the full
+  model: with all five blocks and an SVM, 8x8x8 gives 0.961 vs 0.963 for 8x4x4, because texture and layout already
+  resolve the confusions that finer colour bins would fix. 8x4x4 was kept as it is 4x smaller (128 vs 512 values).
+  *[The full-model 8x8x8 number comes from a one-off check, not from `MainQ2.py` output - ask to have it added to
+  the script if you want to quote it.]*
 - *Histogram equalisation of the colour image:* equalising the brightness channel lowers the colour+layout accuracy
   from 0.933 to 0.912. The overall brightness of an image carries class information (bright snow and sky, dark ball
   pits and shaded streets), and equalisation removes it.
@@ -288,7 +291,7 @@ vol. 13, no. 1, pp. 21-27, 1967.
 | Pre-processing: colour space, quantisation, histogram equalisation | Done - printed by `MainQ2.py` + `q2_fig03.png` |
 | Misclassification analysis | Done - test errors (`q2_fig10.png`) + CV per-class analysis (`q2_fig07.png`) |
 | File name | The general rules ask for `mainQN.py`; currently `MainQ2.py` (same choice as Q1). |
-| Optional | 8x8x8 HSV bins scored better on their own (0.855 vs 0.824); not tested in the full model. |
+| 8x8x8 HSV bins in the full model | Checked (one-off script, not in `MainQ2.py`): all features + SVM 0.961 vs 0.963 with 8x4x4, paired over the same 15 folds -0.002 -> no gain, 8x4x4 kept. Only colour+layout + SVM gains (0.933 -> 0.951). |
 | Write the report | Use this draft; fit Q2 into 4 pages. |
 | Appendix B (Q2) | Extra figures + settings + code usage (see above). |
 | Code zip | Include `MainQ2.py`, `assign2_sceneclassifier.py`, `assign2_scene_model.pkl` (images not needed). |
