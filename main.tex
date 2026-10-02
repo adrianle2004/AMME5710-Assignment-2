@@ -59,7 +59,7 @@ Ba Nhat Minh \textsc{Le}\\
 
 There are multiple ways to find features between two stereo images. These approaches can be separated into two main categories: densely, for every pixel, or sparsely, at certain interesting points. The dense methods compare image windows along epipolar lines and regularise the result with local, semi-local, or global optimisation \cite{scharstein2002taxonomy, hirschmuller2008stereo}; semi-global matching \cite{hirschmuller2008stereo} is widely used in robotics and car applications. On the other hand, sparse methods detect interesting points and match their descriptors: SIFT \cite{lowe2004distinctive} uses scale-space extrema and gradient histograms, ORB \cite{rublee2011orb} uses fast corner detection and binary descriptors, and AKAZE \cite{alcantarilla2013fast} uses a non-linear scale space with binary descriptors. After matching, we need to apply outlier rejection to reduce the error of the computation. Multiple methods were used, from Lowe's ratio test \cite{lowe2004distinctive} to the epipolar line constraint with RANSAC \cite{fischler1981ransac}.
 
-Stereo vision is used for 3D structure reconstruction using a passive sensor (like a camera) instead of an active sensor (like LiDAR). The applications mainly include obstacle detection and visual odometry on planetary rovers \cite{maimone2007visual}, depth perception for autonomous cars, benchmarked by datasets such as KITTI \cite{geiger2012kitti}, and mapping of the seafloor from underwater vehicles and diver rigs \cite{johnson2010generation, pizarro2009large}. Underwater stereo is much more useful for close-range cases where acoustic sensors (like hydrophones, microphones, etc.) have much lower resolution. However, it is also harder to use stereo since the light is absorbed and scattered, so the images are dark, low contrast, and colour-shifted while also having lens distortion \cite{johnson2010generation}.
+Stereo vision is used for 3D structure reconstruction using a passive sensor (like a camera) instead of an active sensor (like LiDAR). The applications mainly include obstacle detection and visual odometry on planetary rovers \cite{maimone2007visual}, depth perception for autonomous cars, benchmarked by datasets such as KITTI \cite{geiger2012kitti}, and mapping of the seafloor from underwater vehicles and diver rigs \cite{johnson2010generation, pizarro2009large}. Underwater stereo is much more useful for close-range cases where acoustic sensors (sonar) have much lower resolution. However, it is also harder to use stereo since the light is absorbed and scattered, so the images are dark, low contrast, and colour-shifted while also having lens distortion \cite{johnson2010generation}.
 
 This question reconstructs a coral reef from 49 stereo pairs captured by a diver-operated rig with a colour and a monochrome camera, using sparse feature matching, and evaluates the result against a reference terrain model.
 
@@ -74,7 +74,7 @@ For this question, the pipeline generally includes:
     \item World frame: The points of each pair are transformed with \(X_{world} = R^T(X_{cam} - t)\) and coloured from the left image (Listing~\ref{lst:camera_to_world}).
 \end{enumerate}
 The merged world-frame cloud is then compared with the reference terrain model.
-\paragraph{Epipolar line computation - Sampson distance:\label{epipolar}} For a pixel point, the epipolar line take the formula: \(l = Fx\) where F is the fundamental matrix and x is the correspond point. We then calculate Sampson distance which provide a first-order approximation of the geometric re-projection error. 
+\paragraph{Epipolar line computation - Sampson distance:\label{epipolar}} For a pixel point \(\mathbf{x}_l\), the epipolar line in the other image is \(\mathbf{l} = F\mathbf{x}_l\), where \(F\) is the fundamental matrix. The Sampson distance gives a first-order approximation of the geometric re-projection error. 
 \[
 d_S =
 \frac{
@@ -107,7 +107,7 @@ Since our stereo rig is calibrated, we can directly compute the fundamental matr
     \begin{minipage}{0.48\linewidth}
         \centering
         \includegraphics[width=\linewidth]{images/q1_fig02.png}
-        \caption{Feature extraction and ratio outlier rejection - SIFT}
+        \caption{Accepted (green) and geometrically rejected (red) matches, pair 20 - SIFT}
         \label{fig:sift_extract}
     \end{minipage}
 \end{figure}
@@ -130,7 +130,7 @@ Among the methods of feature extraction, I chose SIFT as the main method. Follow
         \hline
     \end{tabular}
 \end{table}
-As observed from Table \ref{tab:outlier_rejection}, without any rejection about half of the candidate matches are wrong (RMSE 1.55 m, errors up to 70 m). The ratio test removes 54\% of the candidates, mostly ambiguous matches in dark, low-contrast and repetitive regions, and the share of points within 5 cm rises from 48.2\% to 92.5\% while the median error drops from 7.3 cm to 1.0 cm. However, a few thousand distinctive but wrong matches remain, some metres away (RMSE 0.229 m).
+As observed from Table \ref{tab:outlier_rejection}, without any rejection about half of the candidate matches are wrong (RMSE 1.55 m, errors up to 70 m). The ratio test removes 54\% of the candidates (ambiguous matches), and the share of points within 5 cm rises from 48.2\% to 92.5\% while the median error drops from 7.3 cm to 1.0 cm. However, a few thousand distinctive but wrong matches remain, some metres away (RMSE 0.229 m).
 
 The epipolar check removes only 1.1\% of the remaining matches, but it cuts the RMSE from 0.229 m to 0.040 m and the maximum error from 61.2 m to 3.4 m. The re-projection check removes nothing further, since a match within 2 px of its epipolar line already re-projects within 1.4 px. The ratio test and epipolar check catch different errors: without the ratio test the RMSE rises to 0.196 m, five times the final value (Table \ref{tab:detector_comparison}).
 
@@ -177,9 +177,9 @@ The final SIFT point cloud has 466k points (Figure \ref{fig:terrain_re}). The me
     \end{tabular}
 \end{table}
 
-\textbf{Interest point types:} While SIFT produces the densest point clouds (highest points - 466k), AKAZE gives a similar MAD with almost 30\% fewer points and about a third of the computation time - can be seen in table \ref{tab:detector_comparison} and figure \ref{fig:param_comp} . ORB is the least suitable here: it produces the fewest points and its MAD is 1.8 cm, almost twice as large.
+\textbf{Interest point types:} Among the default detectors, SIFT produces the densest point cloud (466k), while AKAZE gives a similar MAD with almost 30\% fewer points and about a third of the computation time - see Table \ref{tab:detector_comparison} and Figure \ref{fig:param_comp}. ORB is the least suitable here: it produces the fewest points and its MAD is 1.8 cm, almost twice as large.
 
-\textbf{Parameter:} The parameter trade density for accuracy. A stricter SIFT ratio test (0.6) gives 23\% fewer points but lowers the RMSE from 0.040 m to 0.034 m. Lowering the detector threshold (SIFT 0.01, AKAZE \(10^{-4}\)) increase density (roughly 23\% to 100\%). However, these extra points are not distinctive enough as the RMSE rises slightly (0.044 and 0.043 m). CLAHE has the most impact on the density. Without it SIFT find 2.4x fewer points (191k) with the same accuracy and coverage drop from 43\% to 38\%.
+\textbf{Parameters:} The parameters trade density for accuracy. A stricter SIFT ratio test (0.6) gives 23\% fewer points but lowers the RMSE from 0.040 m to 0.034 m. Lowering the detector threshold (SIFT 0.01, AKAZE \(10^{-4}\)) increases density (roughly 23\% to 100\%). However, these extra points are not distinctive enough as the RMSE rises slightly (0.044 and 0.043 m). CLAHE has the most impact on the density. Without it, SIFT finds 2.4x fewer points (191k) with the same accuracy, and coverage drops from 43\% to 38\%.
 
 \textbf{Types of structure covered: }The terrain is divided into 5 cm cells, which are split into 3 main types: flat (\(<\) 20°, mostly sand and rubble), moderate (20-37°) and steep (\(>\) 37°, coral faces and edges). Within the coverage area, SIFT with CLAHE reconstructs almost every 5 cm cell regardless of slope (99-100\%). Without CLAHE, coverage falls to 86-89\%. ORB covers flat areas better than steep ones (76\% vs 68\% with 10,000 features; 41\% vs 33\% with 1,000). AKAZE covers 94-95\% of every class. Accuracy depends on structure for every detector. The median error on steep cells is about 2.5x that on flat cells (1.8 cm vs 0.7 cm for SIFT). Details in Figure~\ref{fig:type_struct} (Appendix).
 
@@ -287,11 +287,11 @@ Layout is the strongest single feature block, reaching 0.944 accuracy, followed 
     \caption{Parameter comparison}
     \label{fig:q2_param_comp}
 \end{figure}
-\textbf{Parameter selection: }Detail can be observed in Figure \ref{fig:q2_param_comp}. 
+\textbf{Parameter selection: }Details are shown in Figure \ref{fig:q2_param_comp}. 
 \begin{itemize}
     \item KNN: $k \in \{1,\ldots,21\}$, with uniform or distance weighting and Euclidean or Manhattan distance. Accuracy peaks at $k=5$ with distance weighting (0.914); $k=1$ overfits to single neighbours, while large $k$ blurs the classes.
     
-    \item SVM: RBF kernel with $C \in (0.01,\ldots,100)$ and $\gamma \in (0.01,\ldots,3)$, and a linear kernel over the same $C$ range. Performance is stable around 0.93--0.96 for $C>1$ and $\gamma<3$, but accuracy starts to collapse beyond this region. We chose $C=10$ and $\gamma=0.03$, so the result does not depend on a precise value.
+    \item SVM: RBF kernel with $C \in \{0.1,\ldots,1000\}$ and $\gamma \in \{0.01,\ldots,3\}$, and a linear kernel with $C \in \{0.01,\ldots,100\}$. The RBF SVM has a broad plateau of about 0.96 for $C \geq 10$ and $\gamma$ = 0.01--0.1, and collapses for $\gamma \geq 1$ (0.45 at $\gamma=3$), where each training image becomes its own island. We chose $C=10$ and $\gamma=0.03$, inside the plateau, so the result does not depend on a precise value.
     
     \item Random forest: 500 trees, with maximum features of $\sqrt{d}$ or 20\% of $d$.
 \end{itemize}
@@ -339,7 +339,7 @@ In Figure \ref{fig:q2_misclass}, the first misclassified image is a bright sky w
 \end{table}
 \noindent
 Since the test set is too small for feature debugging, we use cross-validated predictions on the training set. Table \ref{tab:per_class_recall} shows the \textbf{performance of each feature}. Colour works well for unique-colour classes such as ball pit, desert and park, but performs poorly on snow and urban. Spatial layout improves these classes, reaching 0.95 recall for both. Texture performs differently, recognising urban scenes well (0.90) from straight edges and repeated windows, but poorly on smooth scenes such as desert (0.57) and snow (0.53).\\
-\textbf{Compare to the state of the art:} CNNs learn features directly from millions of images \cite{zhou2018places} and recognise far more categories than our hand-crafted features, but a CNN cannot be trained from scratch on only 280 images, so hand-crafted features with an SVM suit this case.
+\textbf{Compare to the state of the art:} CNNs learn features directly from millions of images \cite{zhou2018places} and recognise far more categories than our hand-crafted features, but a CNN cannot be trained from scratch on only 280 images, so hand-crafted features with an SVM suit this case. A CNN pre-trained on Places would likely do better, but it would use data outside the provided set, which is not allowed here.
 
 
 \newpage
