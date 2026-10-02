@@ -1,0 +1,599 @@
+\documentclass[12pt]{article}
+\usepackage{preamble}
+\usepackage{listings}
+
+\title{}
+\pagestyle{empty}
+\linespread{1}
+
+\begin{document}
+
+\begin{titlepage}
+
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}} 
+\begin{flushright}
+\includegraphics[width=0.3\textwidth]{images/usydNew.png}\\[2cm]
+\end{flushright}
+
+\center 
+
+\textsc{\LARGE The University of Sydney}\\[0.75cm]
+\textsc{\Large School of Aerospace, Mechanical and Mechatronic Engineering}\\[1cm]
+
+\textsc{\Large AMME5710}\\[0.25cm] 
+
+\HRule \\[0.4cm]
+{ \huge \bfseries Assignment 2}\\[0.4cm] 
+{\large Report}\\[0.4cm]
+\HRule \\[0.4cm]
+Unit coordinator: Mitch Bryson
+\HRule \\[1.25cm]
+
+\begin{minipage}{0.4\textwidth}
+\begin{flushleft} \large
+\emph{Author:}\\
+Ba Nhat Minh \textsc{Le}\\
+\end{flushleft}
+\end{minipage}
+~
+\begin{minipage}{0.4\textwidth}
+\begin{flushright} \large\emph{}\\
+\textsc{530147596}\\
+\end{flushright}
+\end{minipage}\\[1.5cm]
+
+{\large \today}\\[1.5cm]
+
+\vfill
+\end{titlepage}
+\tableofcontents 
+\vspace{3em}
+\color{red}
+\noindent
+\textbf{Please note that the code takes a while to run - wait until all 10 figures are displayed on the window when running code of question 1 and question 2.}
+\color{black}
+\newpage
+\section{Question 1}
+\subsection{Introduction}
+\hspace*{2em}Stereovision (or stereo vision) is a technique in computer vision that uses two or more cameras placed at different viewpoints to simulate human binocular vision. It allows the perception of depth by identifying corresponding points in the images taken from each camera. The key idea is to estimate the disparity between two images to calculate depth. Once the cameras are calibrated, with their intrinsic parameters (focal length, principal point, lens distortion) and the rotation and translation between them known, each pixel in one image can only match pixels along a line in the other image, the epipolar line \cite{hartley2004multiple}. After matching these features, we can calculate the depth of the pixel via triangulation. For a feature pair, \(Z = f\frac{B}{d}\), where \(f\) is the focal length, \(B\) the baseline, and \(d\) the disparity \cite{hartley2004multiple}.
+
+There are multiple ways to find features between two stereo images. These approaches can be separated into two main categories: densely, for every pixel, or sparsely, at certain interesting points. The dense methods compare image windows along epipolar lines and regularise the result with local, semi-local, or global optimisation \cite{scharstein2002taxonomy, hirschmuller2008stereo}; semi-global matching \cite{hirschmuller2008stereo} is widely used in robotics and car applications. On the other hand, sparse methods detect interesting points and match their descriptors: SIFT \cite{lowe2004distinctive} uses scale-space extrema and gradient histograms, ORB \cite{rublee2011orb} uses fast corner detection and binary descriptors, and AKAZE \cite{alcantarilla2013fast} uses a non-linear scale space with binary descriptors. After matching, we need to apply outlier rejection to reduce the error of the computation. Multiple methods were used, from Lowe's ratio test \cite{lowe2004distinctive} to the epipolar line constraint with RANSAC \cite{fischler1981ransac}.
+
+Stereo vision is used for 3D structure reconstruction using a passive sensor (like a camera) instead of an active sensor (like LiDAR). The applications mainly include obstacle detection and visual odometry on planetary rovers \cite{maimone2007visual}, depth perception for autonomous cars, benchmarked by datasets such as KITTI \cite{geiger2012kitti}, and mapping of the seafloor from underwater vehicles and diver rigs \cite{johnson2010generation, pizarro2009large}. Underwater stereo is much more useful for close-range cases where acoustic sensors (like hydrophones, microphones, etc.) have much lower resolution. However, it is also harder to use stereo since the light is absorbed and scattered, so the images are dark, low contrast, and colour-shifted while also having lens distortion \cite{johnson2010generation}.
+
+This question reconstructs a coral reef from 49 stereo pairs captured by a diver-operated rig with a colour and a monochrome camera, using sparse feature matching, and evaluates the result against a reference terrain model.
+
+\subsection{Methodology}
+For this question, the pipeline generally includes: 
+\begin{enumerate}
+    \item Pre-processing: Load the pair of images and convert the left (colour) image to grey-scale. We then apply contrast-limited adaptive histogram equalisation (CLAHE, 8x8 tiles) \cite{zuiderveld1994clahe} to raise the low underwater contrast and make the colour and monochrome views look more alike. Code in Listing~\ref{lst:stereo_preprocessing}.
+    \item Feature extraction: SIFT with default parameters is applied to the CLAHE images, with comparisons against ORB and AKAZE. Each SIFT keypoint produces a 128-value descriptor. Features are matched using \texttt{knnMatch} with $k=2$, retaining the two closest right-image descriptors for each left keypoint. Lowe's ratio test then rejects ambiguous matches where the nearest distance is not below $0.8$ times the second-nearest distance \cite{lowe2004distinctive}, acting as the first layer of the outlier rejection.
+    \item Undistortion: the matched pixel coordinates are undistorted with the calibrated lens model ($D_l$, $D_r$), so they follow an ideal pinhole camera. Code in Listing~\ref{lst:reconstruct_pair}.
+    \item Epipolar outlier rejection: once the points are undistorted, a correct match must lie on the epipolar line of its partner, given by the calibrated fundamental matrix $F$. The images are not rectified (the 8 cm baseline is along the image $y$-axis), so these lines are not image rows. Each match's Sampson distance must be below 2 px (Listing~\ref{lst:fundamental_sampson}).
+    \item Triangulation and re-projection check: with the projection matrices $P_L = K_l[I\,|\,0]$ and $P_R = K_r[R\,|\,t]$, each match is triangulated into a 3D point in the left camera frame. We then keep only points that re-project within 2 px in both images. Code in Listing~\ref{lst:triangulation}.
+    \item World frame: The points of each pair are transformed with \(X_{world} = R^T(X_{cam} - t)\) and coloured from the left image (Listing~\ref{lst:camera_to_world}).
+\end{enumerate}
+The merged world-frame cloud is then compared with the reference terrain model.
+\paragraph{Epipolar line computation - Sampson distance:\label{epipolar}} For a pixel point, the epipolar line take the formula: \(l = Fx\) where F is the fundamental matrix and x is the correspond point. We then calculate Sampson distance which provide a first-order approximation of the geometric re-projection error. 
+\[
+d_S =
+\frac{
+\left(\mathbf{x}_r^T F \mathbf{x}_l\right)^2
+}{
+(F\mathbf{x}_l)_1^2
++
+(F\mathbf{x}_l)_2^2
++
+(F^T\mathbf{x}_r)_1^2
++
+(F^T\mathbf{x}_r)_2^2
+}
+\]
+Since our stereo rig is calibrated, we can directly compute the fundamental matrix F from essential matrix E: 
+\(E = [\mathbf{t}]_\times R\) and \(F = K_r^{-T} E K_l^{-1}\), where \([\mathbf{t}]_\times\) is the cross-product matrix of \(\mathbf{t}\) (valid for undistorted pixels). Then we compute the Sampson distance of each match. The match is only kept when \(\sqrt{d_S}<2\) px. With this outlier rejection, the geometry is exact and fixed, the result will be deterministic and will not fail on a flat sea floor. 
+\paragraph{Outlier rejection layers:} Overall, the pipeline has 3 rejection layers: the ratio test (keep ratio $<0.8$), the epipolar check (Sampson distance $<2$ px) and the re-projection check ($<2$ px in both images). 
+\subsection{Results and Discussion}
+\begin{figure}[H]
+    \centering
+
+    % First row
+    \begin{minipage}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/q1_fig01.png}
+        \caption{Keypoints - SIFT}
+        \label{fig:key_sift}
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/q1_fig02.png}
+        \caption{Feature extraction and ratio outlier rejection - SIFT}
+        \label{fig:sift_extract}
+    \end{minipage}
+\end{figure}
+Among the methods of feature extraction, I chose SIFT as the main method. Following the pipeline, the first step includes finding keypoints using SIFT, as seen in Figure \ref{fig:key_sift}. We then applied Lowe's ratio outlier rejection to further reduce the keypoints and errors. The result goes from an initial 19,112 points down to 8,790 candidate points in Figure \ref{fig:sift_extract}. The geometric checks then keep 8,688 of these. In Figures \ref{fig:sift_extract}, \ref{fig:orb_extract} and \ref{fig:akaze_extract}, the accepted matches (green) form near-parallel lines, as expected for an 8 cm baseline, while the matches rejected by the geometric checks (red) join unrelated regions at random angles. The effect of each rejection layer over all 49 pairs is detailed in Table \ref{tab:outlier_rejection}.
+
+\begin{table}[H]
+    \centering
+    \caption{Effect of outlier rejection (SIFT + CLAHE, 49 pairs).}
+    \label{tab:outlier_rejection}
+    \scriptsize
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{lrrrrr}
+        \hline
+        Stage & Points & RMSE (m) & Median $|e|$ (cm) & $|e|<5$ cm & Max. $|e|$ (m) \\
+        \hline
+        Candidate matches     & 1,031,900 & 1.547 & 7.3 & 48.2\% & 70.2 \\
+        + ratio test          & 471,572   & 0.229 & 1.0 & 92.5\% & 61.2 \\
+        + epipolar check      & 466,459   & 0.040 & 1.0 & 93.4\% & 3.4 \\
+        + reprojection check (final) & 466,459 & 0.040 & 1.0 & 93.4\% & 3.4 \\
+        \hline
+    \end{tabular}
+\end{table}
+As observed from Table \ref{tab:outlier_rejection}, without any rejection about half of the candidate matches are wrong (RMSE 1.55 m, errors up to 70 m). The ratio test removes 54\% of the candidates, mostly ambiguous matches in dark, low-contrast and repetitive regions, and the share of points within 5 cm rises from 48.2\% to 92.5\% while the median error drops from 7.3 cm to 1.0 cm. However, a few thousand distinctive but wrong matches remain, some metres away (RMSE 0.229 m).
+
+The epipolar check removes only 1.1\% of the remaining matches, but it cuts the RMSE from 0.229 m to 0.040 m and the maximum error from 61.2 m to 3.4 m. The re-projection check removes nothing further, since a match within 2 px of its epipolar line already re-projects within 1.4 px. The ratio test and epipolar check catch different errors: without the ratio test the RMSE rises to 0.196 m, five times the final value (Table \ref{tab:detector_comparison}).
+
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/q1_fig03.png}
+        \caption{3D terrain reconstruction}
+        \label{fig:terrain_re}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/q1_fig04.png}
+        \caption{Depth comparison}
+        \label{fig:depth_comp}
+    \end{subfigure}
+    \caption{Terrain reconstruction and depth comparison.}
+    \label{fig:terrain}
+\end{figure}
+The final SIFT point cloud has 466k points (Figure \ref{fig:terrain_re}). The median height error is $-1$ mm (no systematic bias), the MAD is 1.0 cm, 93.4\% of points lie within 5 cm, and the RMSE is 4.0 cm (Figure \ref{fig:depth_comp}). It covers 43\% of the reference terrain, since each image sees only about 1.6 m $\times$ 1.2 m of seafloor while the reference came from a larger survey. Errors gather around coral ridges and edges (Figure \ref{fig:depth_comp}, centre), where the 2.5D reference cannot represent overhangs, and grow with range (Figure \ref{fig:q1_range}) as depth error scales with \(Z^2/(fB)\). 
+\begin{table}[H]
+    \centering
+    \caption{Detector and parameter comparison using the same reconstruction pipeline.}
+    \label{tab:detector_comparison}
+    \scriptsize
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{lrrrrr}
+        \toprule
+        Configuration & Points & RMSE (m) & MAD (cm) & $|e|<5$ cm & Coverage \\
+        \midrule
+        SIFT, ratio 0.8, CLAHE (final) & 466k & 0.040 & 1.0 & 93.4\% & 43\% \\
+        SIFT, ratio 0.6 & 359k & 0.034 & 0.9 & 94.6\% & 42\% \\
+        SIFT, no ratio test & 530k & 0.196 & 1.0 & 91.8\% & 44\% \\
+        SIFT, no CLAHE & 191k & 0.039 & 0.9 & 93.3\% & 38\% \\
+        SIFT, contrastThreshold 0.01 & 572k & 0.044 & 1.0 & 92.6\% & 44\% \\
+        ORB, 1000 features & 23k & 0.048 & 1.8 & 86.3\% & 16\% \\
+        ORB, 10000 features & 223k & 0.047 & 1.8 & 87.2\% & 31\% \\
+        AKAZE, default & 329k & 0.038 & 1.0 & 92.3\% & 41\% \\
+        AKAZE, threshold $10^{-4}$ & 665k & 0.043 & 1.1 & 91.2\% & 43\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Interest point types:} While SIFT produces the densest point clouds (highest points - 466k), AKAZE gives a similar MAD with almost 30\% fewer points and about a third of the computation time - can be seen in table \ref{tab:detector_comparison} and figure \ref{fig:param_comp} . ORB is the least suitable here: it produces the fewest points and its MAD is 1.8 cm, almost twice as large.
+
+\textbf{Parameter:} The parameter trade density for accuracy. A stricter SIFT ratio test (0.6) gives 23\% fewer points but lowers the RMSE from 0.040 m to 0.034 m. Lowering the detector threshold (SIFT 0.01, AKAZE \(10^{-4}\)) increase density (roughly 23\% to 100\%). However, these extra points are not distinctive enough as the RMSE rises slightly (0.044 and 0.043 m). CLAHE has the most impact on the density. Without it SIFT find 2.4x fewer points (191k) with the same accuracy and coverage drop from 43\% to 38\%.
+
+\textbf{Types of structure covered: }The terrain is divided into 5 cm cells, which are split into 3 main types: flat (\(<\) 20°, mostly sand and rubble), moderate (20-37°) and steep (\(>\) 37°, coral faces and edges). Within the coverage area, SIFT with CLAHE reconstructs almost every 5 cm cell regardless of slope (99-100\%). Without CLAHE, coverage falls to 86-89\%. ORB covers flat areas better than steep ones (76\% vs 68\% with 10,000 features; 41\% vs 33\% with 1,000). AKAZE covers 94-95\% of every class. Accuracy depends on structure for every detector. The median error on steep cells is about 2.5x that on flat cells (1.8 cm vs 0.7 cm for SIFT). Details in Figure~\ref{fig:type_struct} (Appendix).
+
+\newpage
+\section{Question 2}
+\subsection{Introduction}
+Scene classification is a computer vision task that assigns an image or video frame to a category based on the overall scene context, such as a park, cityscape, or beach, rather than individual objects \cite{zhou2018places, torralba2003context}. Applications include robot and vehicle localisation and navigation, camera exposure and colour settings, and image organisation and retrieval \cite{zhou2018places}.
+
+Early methods used low-level features such as colour histograms \cite{swain1991color}, edges, and texture statistics to separate indoor and outdoor scenes. Oliva and Torralba's GIST descriptor \cite{oliva2001modeling} then summarised the ``spatial envelope'' using Gabor filter energies. Later methods used local feature histograms, such as bag-of-visual-words over SIFT descriptors \cite{fei2005bayesian}, and spatial pyramid matching \cite{lazebnik2006spatial}. With large datasets such as Places \cite{zhou2018places} and SUN \cite{xiao2010sun}, convolutional neural networks trained on millions of images became the state of the art.
+
+In this question, we build a classifier for 7 Places classes (ball pit, desert, park, road, sky, snow, urban; 50 images each) using hand-crafted colour and texture features and classical classifiers, since no other data may be used.
+
+\subsection{Methodology}
+
+\textbf{Experimental design:} The dataset contains 350 images, split stratified by class into 280 training and 70 testing images using a random seed. All training choices are made using cross-validation on the training set, while the test set is used once at the end. Since a single 5-fold split gives only 56 validation images per fold, we use 5-fold cross-validation three times with different folds (15 train/validation splits) and report the mean and standard deviation. Accuracy is used as the selection metric since the classes are balanced. We also report per-class precision, recall, F1, confusion matrix, and top-k accuracy.
+
+\textbf{Pre-processing:} All images are resized to 128$\times$128. A colour copy is used for colour features and a greyscale copy for texture features. Four pre-processing choices were tested using an RBF SVM, as detailed in Table \ref{tab:preprocessing_features}.
+
+\begin{table}[h]
+    \centering
+    \caption{Pre-processing and feature parameters (RBF SVM, 3$\times$5-fold CV accuracy, mean $\pm$ std). Bold indicates the selected configuration.}
+    \label{tab:preprocessing_features}
+    \scriptsize
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{lclc}
+        \toprule
+        Variant & Accuracy & Variant & Accuracy \\
+        \midrule
+        Colour hist RGB 4$\times$4$\times$4 & $0.831\pm0.030$ &
+        Layout grid 2$\times$2 & $0.873\pm0.044$ \\
+        \textbf{Colour hist HSV 8$\times$4$\times$4} & $\mathbf{0.824\pm0.036}$ &
+        \textbf{Layout grid 4$\times$4} & $\mathbf{0.944\pm0.027}$ \\
+        Colour hist Lab 4$\times$4$\times$4 & $0.755\pm0.053$ &
+        HOG cell 16 px & $0.583\pm0.059$ \\
+        HSV 4$\times$2$\times$2 & $0.751\pm0.045$ &
+        \textbf{HOG cell 32 px} & $\mathbf{0.627\pm0.043}$ \\
+        HSV 16$\times$4$\times$4 & $0.827\pm0.030$ &
+        GIST grid 2$\times$2 & $0.636\pm0.054$ \\
+        HSV 8$\times$8$\times$8 & $0.855\pm0.034$ &
+        \textbf{GIST grid 4$\times$4} & $\mathbf{0.652\pm0.059}$ \\
+        \textbf{Colour+layout} & $\mathbf{0.933\pm0.028}$ &
+        \textbf{Texture, no CLAHE} & $\mathbf{0.748\pm0.036}$ \\
+        Colour+layout, brightness equalised & $0.912\pm0.043$ &
+        Texture with CLAHE & $0.757\pm0.053$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+\begin{itemize}
+\item \textbf{Colour space:} HSV and RGB have similar accuracy (0.824 and 0.831), while Lab is worse (0.755). We chose HSV as it separates hue from brightness.
+\item \textbf{Quantisation:} The 4$\times$2$\times$2 histogram is too coarse (0.751). The other settings perform similarly, with 8$\times$4$\times$4 at 0.824, 16$\times$4$\times$4 at 0.827, and 8$\times$8$\times$8 at 0.855. We chose 8$\times$4$\times$4 as 8$\times$8$\times$8 uses four times more features (512 vs 128) for only a small improvement.
+
+\item \textbf{Colour histogram equalisation:} Brightness equalisation reduces accuracy (0.912 vs 0.933), as brightness provides class information. Therefore, it was not used.
+
+\item \textbf{CLAHE:} CLAHE has little effect (0.757 vs 0.748), so it was not used.
+\end{itemize}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\linewidth]{images/q2_fig02.png}
+    \caption{Feature extraction}
+    \label{fig:q2_feat_extract}
+\end{figure}
+\textbf{Feature extraction:} Five complementary blocks with 962 values are used to describe each image. These classes differ in their colour, their surface texture and where they appear; they can be seen in Figure \ref{fig:q2_feat_extract}. 
+\begin{itemize}
+    \item Colour histogram (128 values): joint colour histogram, normalised and square-rooted (Hellinger mapping) so one dominant colour does not swamp other bins. Captures colours such as orange desert, green park, white snow, blue sky and the multicolour ball pit.
+    
+    \item Spatial colour layout (96 values): mean and standard deviation of L, a, and b for each cell in a 4$\times$4 grid. Captures where colours are located, such as sky at the top and snow or grass at the bottom. The 4$\times$4 grid is better than 2$\times$2 (0.944 vs 0.873).
+    
+    \item HOG (324 values) \cite{dalal2005histograms}: describes edge directions in each region. From Table \ref{tab:preprocessing_features}, 32 px cells perform better than 16 px (0.627 vs 0.583), with fewer features and more stability for 280 training images.
+    
+    \item Local binary patterns (30 values) \cite{ojala2002multiresolution}: rotation-invariant uniform LBP histograms at radii 1, 2 and 3 px, describing fine texture such as sky, sand, snow, grass and foliage. Details are shown in Table \ref{tab:feature_classifier}.
+    
+    \item GIST (384 values) \cite{oliva2001modeling}: energy of 24 Gabor filters (4 scales $\times$ 6 orientations) averaged on a 4$\times$4 grid, describing the amount of texture at each scale and direction in each region.
+\end{itemize}
+We combined blocks of different sizes. Each feature is standardised on the training data, and each block is divided by the square root of its size so all blocks contribute equally to the KNN and SVM distances. 
+\begin{table}[H]
+    \centering
+    \caption{Feature set $\times$ classifier (3$\times$5-fold CV accuracy, best parameters).}
+    \label{tab:feature_classifier}
+    \scriptsize
+    \setlength{\tabcolsep}{6pt}
+    \begin{tabular}{lccc}
+        \toprule
+        Feature set & KNN & SVM & Random forest \\
+        \midrule
+        colour        & 0.833 & 0.829 & 0.799 \\
+        layout        & 0.906 & 0.944 & 0.935 \\
+        hog           & 0.506 & 0.627 & 0.576 \\
+        lbp           & 0.546 & 0.669 & 0.577 \\
+        gist          & 0.592 & 0.652 & 0.648 \\
+        colour+layout & 0.904 & 0.933 & 0.949 \\
+        hog+lbp+gist  & 0.710 & 0.751 & 0.711 \\
+        \textbf{all}  & 0.914 & \textbf{0.963 $\pm$ 0.032} & 0.960 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+\textbf{Algorithm selection:} Three classifiers, KNN \cite{cover1967nearest}, SVM \cite{cortes1995support} and Random Forest \cite{breiman2001random}, are compared against 8 feature sets: colour, layout, HOG, LBP, GIST, colour + layout, HOG + LBP + GIST, and all. Details can be seen in Table \ref{tab:feature_classifier}.
+\\
+Layout is the strongest single feature block, reaching 0.944 accuracy, followed by colour at 0.799--0.833. Texture features perform lower at 0.506--0.751, but combining them with colour and layout improves performance, reaching 0.963. SVM performs best at 0.963, with Random Forest close at 0.960, while KNN is lowest for the ``all'' feature set. We will further investigate the classifier parameters and use the 5-feature combined set.
+
+
+\noindent
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig05.png}
+    \caption{Parameter comparison}
+    \label{fig:q2_param_comp}
+\end{figure}
+\textbf{Parameter selection: }Detail can be observed in Figure \ref{fig:q2_param_comp}. 
+\begin{itemize}
+    \item KNN: $k \in \{1,\ldots,21\}$, with uniform or distance weighting and Euclidean or Manhattan distance. Accuracy peaks at $k=5$ with distance weighting (0.914); $k=1$ overfits to single neighbours, while large $k$ blurs the classes.
+    
+    \item SVM: RBF kernel with $C \in (0.01,\ldots,100)$ and $\gamma \in (0.01,\ldots,3)$, and a linear kernel over the same $C$ range. Performance is stable around 0.93--0.96 for $C>1$ and $\gamma<3$, but accuracy starts to collapse beyond this region. We chose $C=10$ and $\gamma=0.03$, so the result does not depend on a precise value.
+    
+    \item Random forest: 500 trees, with maximum features of $\sqrt{d}$ or 20\% of $d$.
+\end{itemize}
+SVM remains the final classifier; its learning curve is in Figure~\ref{fig:q2_learn_curve} (Appendix). 
+\subsection{Results and Discussion}
+\begin{figure}[H]
+    \centering
+
+    \begin{minipage}[c]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/q2_fig10.png}
+        \caption{Misclassification}
+        \label{fig:q2_misclass}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[c]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/q2_fig08.png}
+        \caption{Overall performance of the final model}
+        \label{fig:final_model_perform}
+    \end{minipage}
+
+\end{figure}
+The model predicted 68 out of 70 test images correctly, achieving an accuracy of 0.971 with a macro F1 of 0.972, which can be seen in Figure \ref{fig:final_model_perform}. It is consistent with its cross-validation estimate (0.963). While ball pit, desert and park have a perfect prediction, road and sky have a recall of 0.9, which makes snow have a precision of 0.83, where both errors were predicted as snow. In both cases the true class was ranked second, so the top-2 accuracy is 1.000 (Figure~\ref{fig:top_k_accuracy}, Appendix). \\
+In Figure \ref{fig:q2_misclass}, the first misclassified image is a bright sky with clouds and tree branches on the side. The high contrast of the cloud along with the tree branches might resemble a snowy scene. The second image includes a high-contrast road with sky. This might also have been mistaken for the high-contrast snow scene. Both errors come from bright, low-saturation regions, which is where the colour cues of sky, snow and road overlap.
+\begin{table}[H]
+    \centering
+    \caption{Per-class recall by feature set (SVM, 5-fold cross-validated predictions on the 280 training images).}
+    \label{tab:per_class_recall}
+    \scriptsize
+    \setlength{\tabcolsep}{5pt}
+    \begin{tabular}{lccccc}
+        \toprule
+        Class & Colour & Layout & HOG+LBP+GIST & Colour+Layout & All \\
+        \midrule
+        ball\_pit & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 \\
+        desert   & 1.00 & 1.00 & 0.57 & 1.00 & 1.00 \\
+        park     & 0.90 & 0.93 & 0.82 & 0.95 & 0.95 \\
+        road     & 0.78 & 0.93 & 0.57 & 0.88 & 0.93 \\
+        sky      & 0.78 & 0.90 & 0.82 & 0.88 & 0.95 \\
+        snow     & 0.72 & 0.95 & 0.53 & 0.93 & 0.93 \\
+        urban    & 0.65 & 0.95 & 0.90 & 0.82 & 0.93 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+\noindent
+Since the test set is too small for feature debugging, we use cross-validated predictions on the training set. Table \ref{tab:per_class_recall} shows the \textbf{performance of each feature}. Colour works well for unique-colour classes such as ball pit, desert and park, but performs poorly on snow and urban. Spatial layout improves these classes, reaching 0.95 recall for both. Texture performs differently, recognising urban scenes well (0.90) from straight edges and repeated windows, but poorly on smooth scenes such as desert (0.57) and snow (0.53).\\
+\textbf{Compare to the state of the art:} CNNs learn features directly from millions of images \cite{zhou2018places} and recognise far more categories than our hand-crafted features, but a CNN cannot be trained from scratch on only 280 images, so hand-crafted features with an SVM suit this case.
+
+
+\newpage
+\bibliographystyle{ieeetr}
+\bibliography{reference}
+\newpage
+\section*{Appendix}
+\subsection*{Question 1}
+\begin{lstlisting}[language=Python, caption={Stereo image loading and CLAHE preprocessing}, label={lst:stereo_preprocessing}]
+def load_pickle(path):
+
+    """Load a python pickle file."""
+
+    with open(path, 'rb') as f:
+
+        return pickle.load(f)
+
+
+def load_stereo_pair(idx, poses):
+
+    """Return (left colour image [RGB], left gray, right gray) for pair idx.
+
+    The left camera is colour and the right camera is monochrome, so the
+    left image is converted to grayscale for feature detection."""
+
+    left = cv2.imread(os.path.join(images_left_dir, poses['filenames_left'][idx]), cv2.IMREAD_COLOR)
+
+    right = cv2.imread(os.path.join(images_right_dir, poses['filenames_right'][idx]), cv2.IMREAD_GRAYSCALE)
+
+    left_rgb = cv2.cvtColor(left, cv2.COLOR_BGR2RGB)
+
+    left_gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY)
+
+    return left_rgb, left_gray, right
+
+
+def apply_clahe(gray):
+
+    """Contrast-limited adaptive histogram equalisation (CLAHE).
+
+    Underwater images are low contrast and the colour/mono sensors respond
+    differently; CLAHE makes the local appearance of the two views more alike
+    and produces more features in dark regions."""
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+    return clahe.apply(gray)
+\end{lstlisting}
+\begin{lstlisting}[language=Python, caption={Fundamental matrix and Sampson distance computation}, label={lst:fundamental_sampson}]
+def skew(v):
+
+    """3x3 skew-symmetric (cross product) matrix [v]x of a 3-vector."""
+
+    v = np.asarray(v).ravel()
+
+    return np.array([[0, -v[2], v[1]],
+
+                     [v[2], 0, -v[0]],
+
+                     [-v[1], v[0], 0]])
+
+
+def calibrated_fundamental_matrix(calib):
+
+    """Fundamental matrix from the known stereo calibration:
+
+        E = [t]x R,   F = Kr^-T E Kl^-1
+
+    valid for undistorted pixel coordinates."""
+
+    E = skew(calib['t']) @ calib['R']
+
+    return np.linalg.inv(calib['Kr']).T @ E @ np.linalg.inv(calib['Kl'])
+
+
+def sampson_distance(F, pts_l, pts_r):
+
+    """First-order geometric distance (pixels) of each correspondence to the
+    epipolar geometry defined by F. pts are Nx2 undistorted pixels."""
+
+    xl = np.hstack([pts_l, np.ones((len(pts_l), 1))])
+
+    xr = np.hstack([pts_r, np.ones((len(pts_r), 1))])
+
+    Fxl = xl @ F.T          # epipolar lines in the right image
+
+    Ftxr = xr @ F           # epipolar lines in the left image
+
+    num = np.sum(xr * Fxl, axis=1) ** 2
+
+    den = Fxl[:, 0] ** 2 + Fxl[:, 1] ** 2 + Ftxr[:, 0] ** 2 + Ftxr[:, 1] ** 2
+
+    return np.sqrt(num / den)
+\end{lstlisting}
+\begin{lstlisting}[language=Python, caption={Stereo projection matrices and point triangulation}, label={lst:triangulation}]
+def projection_matrices(calib):
+
+    """Projection matrices for triangulating points in the left camera's
+    frame of reference:
+
+        Pleft  = Kleft  [I | 0]
+        Pright = Kright [R | t]
+
+    where (R, t) is the pose of the right camera relative to the left."""
+
+    Pleft = calib['Kl'] @ np.hstack((np.eye(3), np.zeros((3, 1))))
+
+    Pright = calib['Kr'] @ np.hstack((calib['R'], calib['t'].reshape(3, 1)))
+
+    return Pleft, Pright
+
+
+def triangulate(Pleft, Pright, pts_left, pts_right):
+
+    """Triangulate matched (undistorted) pixel coordinates
+    and convert from homogeneous 4-vectors to 3D by dividing by the 4th
+    coordinate. Returns Nx3 points in the left camera frame."""
+
+    points_3D = cv2.triangulatePoints(Pleft, Pright,
+                                      pts_left.T.astype(np.float64),
+                                      pts_right.T.astype(np.float64))
+
+    points_3D = points_3D / points_3D[3]
+
+    return points_3D[:3, :].T
+\end{lstlisting}
+\begin{lstlisting}[language=Python, caption={Camera-to-world coordinate transformation}, label={lst:camera_to_world}]
+def camera_to_world(points_cam, R, t):
+
+    """Week 5 convention: x_cam = R X_world + t  =>  X_world = R^T (x_cam - t)."""
+
+    return (R.T @ (points_cam.T - t.reshape(3, 1))).T
+\end{lstlisting}
+\begin{lstlisting}[language=Python, caption={Stereo matching, geometric filtering, and triangulation}, label={lst:reconstruct_pair}]
+def reconstruct_pair(features, cfg, calib, geom):
+    """Match, filter and triangulate one stereo pair.
+    features = output of detect_features. Returns a dict with the 3D points in
+    the left camera frame, their left-image pixel positions and statistics."""
+    kp_l, des_l, kp_r, des_r, norm = features
+    Pleft, Pright, F_cal = geom
+
+    # --- matching ---
+    if des_l is None or des_r is None or len(des_l) < 2 or len(des_r) < 2:
+        matches = []
+    else:
+        matches = match_ratio_test(des_l, des_r, norm, cfg['ratio'])
+
+    out = {'n_kp_left': len(kp_l), 'n_kp_right': len(kp_r), 'n_matches': len(matches),
+           'kp_l': kp_l, 'kp_r': kp_r, 'matches': matches, 'inlier_matches': [],
+           'points_cam': np.zeros((0, 3)), 'pix_left': np.zeros((0, 2))}
+    if len(matches) == 0:
+        return out
+
+    pts1 = np.float32([kp_l[m.queryIdx].pt for m in matches])
+    pts2 = np.float32([kp_r[m.trainIdx].pt for m in matches])
+
+    # --- undistort (triangulation assumes an ideal pinhole camera) ---
+    und1 = cv2.undistortPoints(pts1.reshape(-1, 1, 2), calib['Kl'], calib['Dl'], None, calib['Kl']).reshape(-1, 2)
+    und2 = cv2.undistortPoints(pts2.reshape(-1, 1, 2), calib['Kr'], calib['Dr'], None, calib['Kr']).reshape(-1, 2)
+
+    # --- epipolar outlier rejection (F from the calibration) ---
+    keep = sampson_distance(F_cal, und1, und2) < EPIPOLAR_THRESH
+
+    # --- triangulation in the left camera frame ---
+    X = triangulate(Pleft, Pright, und1, und2)
+
+    # --- reject points with large reprojection error ---
+    err = np.maximum(reprojection_error(Pleft, X, und1), reprojection_error(Pright, X, und2))
+    keep &= err < REPROJ_THRESH
+
+    out['inlier_matches'] = [m for m, k in zip(matches, keep) if k]
+    out['points_cam'] = X[keep]
+    out['pix_left'] = pts1[keep]
+    return out
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q1_fig06.png}
+    \caption{Height error against range from the camera}
+    \label{fig:q1_range}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q1_fig07.png}
+    \caption{SIFT without ratio test}
+    \label{fig:sift_no_ratio}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q1_fig08.png}
+    \caption{ORB extraction}
+    \label{fig:orb_extract}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q1_fig09.png}
+    \caption{AKAZE extraction}
+    \label{fig:akaze_extract}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q1_fig05.png}
+    \caption{Parameter comparison}
+    \label{fig:param_comp}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q1_fig10.png}
+    \caption{Types of structure}
+    \label{fig:type_struct}
+\end{figure}
+\subsection*{Question 2}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig06.png}
+    \caption{Learning curve}
+    \label{fig:q2_learn_curve}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig01.png}
+    \caption{Dataset}
+    \label{fig:q2_dataset}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig03.png}
+    \caption{Feature performance}
+    \label{fig:q2_feat_perf}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig04.png}
+    \caption{Feature set with classifier}
+    \label{fig:q2_feat_clf}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig07.png}
+    \caption{Cross-validated confusion matrix (all features, SVM) and per-class recall by feature set}
+    \label{fig:q2_final_recall}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{images/q2_fig09.png}
+    \caption{Top k accuracy}
+    \label{fig:top_k_accuracy}
+\end{figure}
+\section*{AI Acknowledgement}
+I used Claude code for code commenting (not modifying) and for plotting (mostly to re-organised the figures).\\
+I used ChatGPT for grammar checking and latex. 
+\end{document}

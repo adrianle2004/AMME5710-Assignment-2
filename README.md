@@ -92,7 +92,6 @@ Settings at the top of `MainQ1.py`:
 | `COMPARISON_CONFIGS` | 8 variations | `CONFIG` with the detector or a parameter changed |
 | `EPIPOLAR_THRESH` | `2.0` px | Max Sampson distance to the calibrated epipolar line |
 | `REPROJ_THRESH` | `2.0` px | Max triangulation reprojection error |
-| `DEPTH_RANGE` | `(0.3, 6.0)` m | Plausible camera-to-seafloor distance |
 | `EXAMPLE_PAIR` | `20` | Pair used for keypoint / match plots |
 | `N_DRAW_MATCHES` | `150` | Matches drawn per match plot |
 | `FIGURE_DIR` | `'figures_q1'` | Where figures are saved; old `q1_fig*.png` files are deleted first |
@@ -109,7 +108,7 @@ The code follows the structure of the **Week 5 tutorial** stereo pipeline. For e
 4. **Undistort** the matched points: `cv2.undistortPoints(pts, K, d, None, K)`.
 5. **Epipolar outlier rejection:** F from the known calibration (`F = Kr^-T [t]x R Kl^-1`), Sampson distance < 2 px.
 6. **Triangulate:** `cv2.triangulatePoints` with `Pleft = Kl[I|0]`, `Pright = Kr[R|t]`, then divide by the 4th coordinate.
-7. **Filter:** reprojection error < 2 px in both views, depth 0.3-6 m.
+7. **Filter:** reprojection error < 2 px in both views.
 8. **World frame:** the pose maps world -> camera (`x_cam = R X_world + t`, Week 5 convention), so
    `X_world = R^T (x_cam - t)`. Verified: camera centres `-R^T t` fall over the terrain, about 2.5 m above it,
    with the optical axis pointing down (+Z).
@@ -118,7 +117,7 @@ All 49 pairs are merged into one point cloud.
 
 **Terrain comparison:** each point's Z is compared with the reference surface directly below it
 (`Z = -height_grid` at `(flip(X), Y)`, the layout used by the plotting code in the PDF; without the flip the
-RMSE is 0.29 m instead of 0.038 m, confirming the layout).
+RMSE is 0.29 m instead of 0.040 m, confirming the layout).
 
 ---
 
@@ -126,21 +125,21 @@ RMSE is 0.29 m instead of 0.038 m, confirming the layout).
 
 | Config | Points | RMSE | MAD | Within 5 cm | Coverage (5 cm cells) |
 |---|---|---|---|---|---|
-| **SIFT (`CONFIG`)** | **466k** | **0.038 m** | **0.010 m** | **93.4%** | **43%** |
+| **SIFT (`CONFIG`)** | **466k** | **0.040 m** | **0.010 m** | **93.4%** | **43%** |
 | SIFT ratio 0.6 | 359k | 0.034 m | 0.009 m | 94.6% | 42% |
-| SIFT no ratio test | 529k | 0.075 m | 0.010 m | 92.0% | 44% |
-| SIFT no CLAHE | 191k | 0.037 m | 0.009 m | 93.3% | 38% |
-| SIFT contrastThreshold 0.01 | 572k | 0.041 m | 0.010 m | 92.6% | 44% |
-| ORB 1000 | 23k | 0.045 m | 0.018 m | 86.3% | 16% |
-| ORB 10000 | 223k | 0.040 m | 0.018 m | 87.2% | 31% |
-| AKAZE default | 329k | 0.037 m | 0.010 m | 92.3% | 41% |
-| AKAZE threshold 1e-4 | 665k | 0.041 m | 0.011 m | 91.2% | 43% |
+| SIFT no ratio test | 530k | 0.196 m | 0.010 m | 91.8% | 44% |
+| SIFT no CLAHE | 191k | 0.039 m | 0.009 m | 93.3% | 38% |
+| SIFT contrastThreshold 0.01 | 572k | 0.044 m | 0.010 m | 92.6% | 44% |
+| ORB 1000 | 23k | 0.048 m | 0.018 m | 86.3% | 16% |
+| ORB 10000 | 223k | 0.047 m | 0.018 m | 87.2% | 31% |
+| AKAZE default | 329k | 0.038 m | 0.010 m | 92.3% | 41% |
+| AKAZE threshold 1e-4 | 665k | 0.043 m | 0.011 m | 91.2% | 43% |
 
 MAD = median absolute deviation (robust spread). Main SIFT cloud: median height error -0.001 m (no systematic bias).
 
 Discussion points for the report:
 - **Ratio test is key for accuracy:** without it, about half the candidate matches are wrong; the geometric filters
-  remove most of them, but RMSE still doubles (0.038 -> 0.075 m). See `q1_fig07.png`.
+  remove most of them, but RMSE is still five times higher (0.040 -> 0.196 m). See `q1_fig07.png`.
 - **CLAHE is key for density:** 2.4x more points (191k -> 466k) and coverage 38 -> 43% at the same accuracy;
   points from dark image regions increase 4.7x vs 2.0x in bright regions.
 - **Accuracy vs density trade-off:** ratio 0.6 gives fewer points but a lower RMSE; lower detector thresholds
@@ -155,7 +154,8 @@ Discussion points for the report:
   error of flat sand/rubble (< 20 deg) for SIFT (1.8 vs 0.7 cm). SIFT + CLAHE covers ~99% of the imaged area in
   every slope class; ORB 10000 covers 76% of flat vs 68% of steep cells.
 - **Outlier rejection stages** (printed): candidates 1.03M points, RMSE 1.55 m -> ratio test 472k, 0.23 m ->
-  epipolar check 466k, 0.040 m -> reprojection check (removes 0) -> depth check 466,442, 0.038 m.
+  epipolar check 466k, 0.040 m -> reprojection check (removes 0, final) 466,459, 0.040 m. There is no depth-range
+  filter: the cloud is evaluated as it comes out of matching and geometry checks, not cleaned up afterwards.
 
 Figures in `figures_q1/`:
 

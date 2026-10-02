@@ -69,7 +69,6 @@ COMPARISON_CONFIGS = [
 # ---------------------------------------------------------------------------
 EPIPOLAR_THRESH = 2.0       # max Sampson distance to calibrated epipolar line [px]
 REPROJ_THRESH = 2.0         # max triangulation reprojection error [px]
-DEPTH_RANGE = (0.3, 6.0)    # plausible distance from camera to seafloor [m]
 EXAMPLE_PAIR = 20           # index of the stereo pair used for example plots
 N_DRAW_MATCHES = 150        # number of (random) matches drawn in match plots
 FIGURE_DIR = 'figures_q1'   # figures are also saved here for the report
@@ -237,9 +236,9 @@ def reconstruct_pair(features, cfg, calib, geom):
     # --- triangulation in the left camera frame ---
     X = triangulate(Pleft, Pright, und1, und2)
 
-    # --- reject points with large reprojection error or implausible depth ---
+    # --- reject points with large reprojection error ---
     err = np.maximum(reprojection_error(Pleft, X, und1), reprojection_error(Pright, X, und2))
-    keep &= (err < REPROJ_THRESH) & (X[:, 2] > DEPTH_RANGE[0]) & (X[:, 2] < DEPTH_RANGE[1])
+    keep &= err < REPROJ_THRESH
 
     out['inlier_matches'] = [m for m, k in zip(matches, keep) if k]
     out['points_cam'] = X[keep]
@@ -575,14 +574,14 @@ def rejection_stages(cfg, calib, poses, images, cache, terrain_model):
     """Effect of each outlier-rejection stage. For every pair, all candidate
     matches (nearest neighbour of every left descriptor) are triangulated and
     the stages are applied one at a time: ratio test -> epipolar check ->
-    reprojection check -> depth check. Each cumulative stage is transformed to
+    reprojection check. Each cumulative stage is transformed to
     the world frame and compared with the reference terrain.
     Returns a list of (stage name, n removed, summary, worst |error|)."""
     Pleft, Pright = projection_matrices(calib)
     F_cal = calibrated_fundamental_matrix(calib)
     features, _ = cache.get(images, cfg)
     names = ['candidate matches', '+ ratio test', '+ epipolar check',
-             '+ reprojection check', '+ depth check (final)']
+             '+ reprojection check (final)']
     stage_pts = [[] for _ in names]
     for i, (kp_l, des_l, kp_r, des_r, norm) in enumerate(features):
         knn = [p for p in cv2.BFMatcher(norm).knnMatch(des_l, des_r, k=2) if len(p) == 2]
@@ -596,9 +595,8 @@ def rejection_stages(cfg, calib, poses, images, cache, terrain_model):
         epi_ok = sampson_distance(F_cal, und1, und2) < EPIPOLAR_THRESH
         err = np.maximum(reprojection_error(Pleft, X, und1), reprojection_error(Pright, X, und2))
         rep_ok = err < REPROJ_THRESH
-        depth_ok = (X[:, 2] > DEPTH_RANGE[0]) & (X[:, 2] < DEPTH_RANGE[1])
         masks = [np.ones(len(best), dtype=bool), ratio_ok, ratio_ok & epi_ok,
-                 ratio_ok & epi_ok & rep_ok, ratio_ok & epi_ok & rep_ok & depth_ok]
+                 ratio_ok & epi_ok & rep_ok]
         Xw = camera_to_world(X, poses['R'][:, :, i], poses['t'][:, i])
         for k, m in enumerate(masks):
             stage_pts[k].append(Xw[m])
